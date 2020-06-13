@@ -104,20 +104,35 @@ export function setUp24HourRule(probot: Application) {
     const github = await probot.auth(installId);
     const repos = await github.apps.listRepos({});
 
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 1);
+    const cutoffStr = cutoff.toISOString();
+
+    // remove NEW_PR_LABEL from old PRs
     for (const repo of repos.data.repositories) {
-      probot.log('Running 24 hour cron job on repo:', `${repo.owner.login}/${repo.name}`);
-      // TODO(codebytere): Paginate the PR list
-      const prs = await github.pullRequests.list({
-        owner: repo.owner.login,
-        repo: repo.name,
-        per_page: 100,
-        state: 'open',
-      });
+      const q = [
+        `repo:${repo.owner.login}/${repo.name}`,
+        'is:pr',
+        `-label:${NEW_PR_LABEL}`,
+        `created:<=${cutoffStr}`,
+      ].join('+');
+      const prs = await github.search.issues({ q });
+      for (const pr of prs) {
+        await applyLabelToPR(github, pr, repo.owner.login, repo.name, false);
+      }
+    }
 
-      probot.log('Found', prs.data.length, 'prs for repo:', `${repo.owner.login}/${repo.name}`);
-
-      for (const pr of prs.data) {
-        await applyLabelToPR(github, pr, repo.owner.login, repo.name, shouldPRHaveLabel(pr));
+    // add NEW_PR_LABEL to new PRs
+    for (const repo of repos.data.repositories) {
+      const q = [
+        `repo:${repo.owner.login}/${repo.name}`,
+        'is:pr',
+        `created:>${cutoffStr}`,
+        `label:${NEW_PR_LABEL}`,
+      ].join('+');
+      const prs = await github.search.issues({ q });
+      for (const pr of prs) {
+        await applyLabelToPR(github, pr, repo.owner.login, repo.name, true);
       }
     }
   }
